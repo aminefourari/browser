@@ -24,15 +24,16 @@ inline constexpr ItemId kNoItem = 0;
 inline constexpr SpaceId kNoSpace = 0;
 
 enum class Section { kFavorites, kPinned, kToday };
-enum class ItemKind { kTab, kFolder };
+enum class ItemKind { kTab, kFolder, kSplit };
+enum class SplitLayout { kSideBySide, kStacked };
 
-// Where an item lives. `space` is ignored for kFavorites. `folder` is kNoItem
-// for the section root. Folders only exist in kPinned; when `folder` is set,
-// `section` and `space` are taken from the folder.
+// Where an item lives. `space` is ignored for kFavorites. `parent` is the
+// folder or Split View the item is in, or kNoItem for the section root; when
+// it is set, `section` and `space` are taken from the parent.
 struct Location {
   Section section = Section::kToday;
   SpaceId space = kNoSpace;
-  ItemId folder = kNoItem;
+  ItemId parent = kNoItem;
 
   bool operator==(const Location&) const = default;
 };
@@ -44,15 +45,47 @@ struct Item {
   std::string title;
   std::string url;         // Tabs only.
   std::string pinned_url;  // Pinned tabs and favorites: where "reset" goes.
-  TimeMs last_active = 0;
-  std::vector<ItemId> children;  // Folders only, in display order.
+  TimeMs last_active = 0;  // Tabs only.
+  SplitLayout layout = SplitLayout::kSideBySide;  // Split Views only.
+  std::vector<ItemId> children;  // Folders and Split Views, in order.
+};
+
+struct Color {
+  uint8_t r = 0;
+  uint8_t g = 0;
+  uint8_t b = 0;
+  uint8_t a = 255;
+
+  bool operator==(const Color&) const = default;
+};
+
+struct SpaceTheme {
+  // Empty: the default theme. One color: solid. Two or three: gradient.
+  std::vector<Color> colors;
+  bool dark = false;
+  double grain = 0;  // 0 to 1.
+
+  bool operator==(const SpaceTheme&) const = default;
+};
+
+struct SpaceIcon {
+  enum class Kind { kNone, kEmoji, kSymbol };
+
+  Kind kind = Kind::kNone;
+  // The emoji itself, or a symbol name (Arc uses SF Symbol names such as
+  // "planet"; the UI maps them to its own icon set).
+  std::string value;
+
+  bool operator==(const SpaceIcon&) const = default;
 };
 
 struct Space {
   SpaceId id = kNoSpace;
   std::string name;
-  std::vector<ItemId> pinned;  // Tabs and folders.
-  std::vector<ItemId> today;   // Tabs only, newest on top.
+  SpaceIcon icon;
+  SpaceTheme theme;
+  std::vector<ItemId> pinned;  // Tabs, folders and Split Views.
+  std::vector<ItemId> today;   // Tabs and Split Views, newest on top.
 };
 
 struct ArchivedTab {
@@ -63,16 +96,21 @@ struct ArchivedTab {
 };
 
 // The sidebar of one profile: Favorites shared by every Space, and per Space a
-// pinned tree (tabs and nested folders) plus a flat list of Today tabs that
-// archive themselves when idle.
+// pinned tree (tabs, nested folders, Split Views) plus Today tabs that archive
+// themselves when idle.
 //
 // Pure data with no Chromium dependencies; the browser layer maps live tabs
 // onto items. Unknown ids and invalid locations are rejected (kNoItem/false).
 class SidebarModel {
  public:
   static constexpr size_t kEnd = static_cast<size_t>(-1);
+  static constexpr size_t kMaxSplitTabs = 4;
 
   SpaceId AddSpace(std::string name);
+  bool EditSpace(SpaceId space,
+                 std::string name,
+                 SpaceIcon icon,
+                 SpaceTheme theme);
   // Deletes the Space and everything in it. The last Space can't be removed.
   bool RemoveSpace(SpaceId space);
 
@@ -83,13 +121,18 @@ class SidebarModel {
                 std::string title,
                 TimeMs now,
                 size_t index = 0);
+  // Folders only live in Pinned.
   ItemId AddFolder(Location where, std::string title, size_t index = kEnd);
+  // Puts 2 to kMaxSplitTabs tabs into a Split View, which takes the first
+  // tab's place. Not allowed in Favorites or inside another Split View.
+  ItemId CreateSplit(const std::vector<ItemId>& tabs, SplitLayout layout);
 
-  // Moves an item (a folder keeps its contents). `index` is the position the
-  // item ends up at. Leaving Today pins the tab (pinned_url = url); entering
-  // Today unpins it.
+  // Moves an item (folders and Split Views keep their contents). `index` is
+  // the position the item ends up at. Tabs leaving Today get pinned
+  // (pinned_url = url); tabs entering Today get unpinned. A Split View left
+  // with one tab turns back into that tab.
   bool Move(ItemId id, Location where, size_t index);
-  // Removes a tab, or a folder and everything inside it.
+  // Removes a tab, or a folder/Split View and everything inside it.
   bool Remove(ItemId id);
 
   bool Activate(ItemId id, TimeMs now);
@@ -98,8 +141,9 @@ class SidebarModel {
   bool ResetToPinnedUrl(ItemId id);
 
   // Closes Today tabs idle for longer than `max_idle_ms`, except those in
-  // `keep` (tabs currently on screen), and adds them to the archive, newest
-  // first. Returns the closed ids so the browser layer can close live tabs.
+  // `keep` (tabs on screen), and adds them to the archive, newest first. A
+  // Split View closes only when all its tabs are idle. Returns the closed tab
+  // ids so the browser layer can close live tabs.
   std::vector<ItemId> ArchiveIdle(TimeMs now,
                                   TimeMs max_idle_ms,
                                   const std::set<ItemId>& keep);
@@ -109,23 +153,26 @@ class SidebarModel {
 
   const Item* GetItem(ItemId id) const;
   const Space* GetSpace(SpaceId id) const;
-  // Children of `where`, or nullptr if it doesn't exist.
+  // Children of a section root, folder or Split View; nullptr if none.
   const std::vector<ItemId>* Children(Location where) const;
   const std::vector<Space>& spaces() const { return spaces_; }
   const std::vector<ItemId>& favorites() const { return favorites_; }
   const std::vector<ArchivedTab>& archive() const { return archive_; }
 
  private:
-  // Validates `where` for an item of `kind` and fills section/space from the
-  // folder if one is given.
-  std::optional<Location> Resolve(Location where, ItemKind kind) const;
-  const std::vector<ItemId>* ChildrenOf(const Location& resolved) const;
-  std::vector<ItemId>* MutableChildrenOf(const Location& resolved);
+  // Validates `where` for an item of `kind` (`moving` if it already exists)
+  // and fills section/space from the parent if one is given.
+  std::optional<Location> Resolve(Location where,
+                                  ItemKind kind,
+                                  ItemId moving) const;
+  std::vector<ItemId>* MutableChildren(const Location& where);
   Item* MutableItem(ItemId id);
-  bool IsInside(ItemId id, ItemId folder) const;
+  Space* MutableSpace(SpaceId id);
+  bool IsInside(ItemId id, ItemId ancestor) const;
   void SetLocation(Item& item, const Location& where);
   void Detach(const Item& item);
   void EraseTree(ItemId id);
+  void DissolveSplitIfTooSmall(ItemId id);
   ItemId Insert(Item item, size_t index);
 
   int64_t next_id_ = 1;

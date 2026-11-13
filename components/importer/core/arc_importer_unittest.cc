@@ -30,7 +30,16 @@ constexpr char kArcSidebar[] = R"json({
       "topAppsContainerIDs": [{"default": true}, "favs"],
       "spaces": [
         "s1", {"id": "s1", "title": "Amine The Wiz", "profile": {"default": true},
-               "containerIDs": ["unpinned", "s1-today", "pinned", "s1-pinned"]},
+               "containerIDs": ["unpinned", "s1-today", "pinned", "s1-pinned"],
+               "customInfo": {
+                 "iconType": {"icon": "planet"},
+                 "windowTheme": {"background": {"single": {"_0": {
+                   "contentOverBackgroundAppearance": "dark", "isVibrant": true,
+                   "style": {"color": {"_0": {"blendedSingleColor": {"_0": {
+                     "translucencyStyle": "light",
+                     "modifiers": {"noiseFactor": 0.95, "overlay": "grain"},
+                     "color": {"red": 0.41675, "green": 0.33541, "blue": 1.2,
+                               "alpha": 1, "colorSpace": "extendedSRGB"}}}}}}}}}}}},
         "s2", {"id": "s2", "title": "Medicine", "profile": {"default": true},
                "containerIDs": ["unpinned", "s2-today", "pinned", "s2-pinned"]}
       ],
@@ -61,7 +70,7 @@ constexpr char kArcSidebar[] = R"json({
                        "data": {"tab": {"savedURL": "https://www.youtube.com/@TheBrowserCompany/videos",
                                         "savedTitle": "The Browser Company"}}},
         "split", {"id": "split", "childrenIds": ["substack", "x"],
-                  "data": {"splitView": {"layoutOrientation": "horizontal"}}},
+                  "data": {"splitView": {"layoutOrientation": "vertical"}}},
         "substack", {"id": "substack", "childrenIds": [],
                      "data": {"tab": {"savedURL": "https://browsercompany.substack.com/archive",
                                       "savedTitle": "Substack"}}},
@@ -114,23 +123,35 @@ TEST(ArcImporterTest, ImportsSpacesFavoritesPinnedAndToday) {
   EXPECT_EQ(model.GetItem(model.favorites()[0])->pinned_url,
             "https://youtube.com");
 
-  // Pinned: the folder, with the nested folder kept and the Split View
-  // flattened into its tabs, in order.
+  // Pinned: the folder, with the nested folder and the Split View kept.
   const auto& pinned = *model.Children({Section::kPinned, wiz, kNoItem});
   ASSERT_EQ(pinned.size(), 1u);
   const sidebar::Item* basics = model.GetItem(pinned[0]);
   EXPECT_EQ(basics->kind, ItemKind::kFolder);
   EXPECT_EQ(basics->title, "Arc Basics");
-  ASSERT_EQ(basics->children.size(), 4u);
+  ASSERT_EQ(basics->children.size(), 3u);
   const sidebar::Item* videos = model.GetItem(basics->children[1]);
   EXPECT_EQ(videos->kind, ItemKind::kFolder);
   EXPECT_EQ(videos->title, "Videos");
   EXPECT_EQ(Urls(model, videos->children),
             std::vector<std::string>{"https://www.youtube.com/@TheBrowserCompany/videos"});
-  EXPECT_EQ(model.GetItem(basics->children[2])->url,
-            "https://browsercompany.substack.com/archive");
-  EXPECT_EQ(model.GetItem(basics->children[3])->url,
-            "https://twitter.com/arcinternet");
+  const sidebar::Item* split = model.GetItem(basics->children[2]);
+  EXPECT_EQ(split->kind, ItemKind::kSplit);
+  EXPECT_EQ(split->layout, sidebar::SplitLayout::kStacked);
+  EXPECT_EQ(Urls(model, split->children),
+            (std::vector<std::string>{"https://browsercompany.substack.com/archive",
+                                      "https://twitter.com/arcinternet"}));
+
+  // Space look: SF Symbol icon, clamped extended-sRGB color, dark, grain.
+  const sidebar::Space& space = model.spaces()[0];
+  EXPECT_EQ(space.icon.kind, sidebar::SpaceIcon::Kind::kSymbol);
+  EXPECT_EQ(space.icon.value, "planet");
+  EXPECT_EQ(space.theme.colors,
+            (std::vector<sidebar::Color>{{106, 86, 255, 255}}));
+  EXPECT_TRUE(space.theme.dark);
+  EXPECT_DOUBLE_EQ(space.theme.grain, 0.95);
+  EXPECT_TRUE(model.spaces()[1].theme.colors.empty());  // Arc default.
+  EXPECT_EQ(model.spaces()[1].icon.kind, sidebar::SpaceIcon::Kind::kNone);
 
   // Today keeps Arc's top-to-bottom order; imported tabs count as active now.
   const auto& today = *model.Children({Section::kToday, wiz, kNoItem});
@@ -218,6 +239,35 @@ TEST(ArcImporterTest, RejectsInvalidInput) {
   // Deep nesting fails cleanly instead of overflowing the stack.
   std::string deep(100000, '[');
   EXPECT_FALSE(ImportArcSidebar(deep, kNow));
+}
+
+TEST(ArcImporterTest, SplitViewsTheModelCantHoldStayFlat) {
+  std::optional<ArcImport> result = ImportArcSidebar(R"({"sidebar": {"containers": [{
+    "topAppsContainerIDs": [{"default": true}, "f"],
+    "spaces": ["s", {"title": "S", "containerIDs": ["unpinned", "t"],
+                     "customInfo": {"iconType": {"emoji_v2": "🌍"}}}],
+    "items": [
+      "f", {"id": "f", "childrenIds": ["fs"]},
+      "fs", {"id": "fs", "childrenIds": ["a", "b"], "data": {"splitView": {}}},
+      "a", {"id": "a", "data": {"tab": {"savedURL": "https://a.com"}}},
+      "b", {"id": "b", "data": {"tab": {"savedURL": "https://b.com"}}},
+      "t", {"id": "t", "childrenIds": ["big"]},
+      "big", {"id": "big", "childrenIds": ["1", "2", "3", "4", "5"],
+              "data": {"splitView": {}}},
+      "1", {"id": "1", "data": {"tab": {"savedURL": "https://1.com"}}},
+      "2", {"id": "2", "data": {"tab": {"savedURL": "https://2.com"}}},
+      "3", {"id": "3", "data": {"tab": {"savedURL": "https://3.com"}}},
+      "4", {"id": "4", "data": {"tab": {"savedURL": "https://4.com"}}},
+      "5", {"id": "5", "data": {"tab": {"savedURL": "https://5.com"}}}]
+  }]}})", kNow);
+  ASSERT_TRUE(result);
+  const SidebarModel& model = result->profiles[0].sidebar;
+  EXPECT_EQ(Urls(model, model.favorites()),
+            (std::vector<std::string>{"https://a.com", "https://b.com"}));
+  const sidebar::Space& space = model.spaces()[0];
+  EXPECT_EQ(space.today.size(), 5u);
+  EXPECT_EQ(space.icon.kind, sidebar::SpaceIcon::Kind::kEmoji);
+  EXPECT_EQ(space.icon.value, "\xF0\x9F\x8C\x8D");
 }
 
 }  // namespace

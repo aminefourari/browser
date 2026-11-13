@@ -77,7 +77,7 @@ TEST_F(SidebarModelTest, MovingFolderToAnotherSpaceMovesContents) {
 
   ASSERT_TRUE(model_.Move(folder, {Section::kPinned, home, kNoItem}, 0));
   EXPECT_EQ(model_.GetItem(tab)->location.space, home);
-  EXPECT_EQ(model_.GetItem(tab)->location.folder, sub);
+  EXPECT_EQ(model_.GetItem(tab)->location.parent, sub);
   EXPECT_TRUE(model_.Children(Pinned())->empty());
 }
 
@@ -160,6 +160,109 @@ TEST_F(SidebarModelTest, RejectsUnknownIdsAndLocations) {
   EXPECT_FALSE(model_.Activate(999, 0));
   EXPECT_EQ(model_.Restore(0, 0), kNoItem);
   EXPECT_EQ(model_.Children(In(999)), nullptr);
+}
+
+TEST_F(SidebarModelTest, SplitTakesFirstTabsPlace) {
+  ItemId a = model_.AddTab(Today(), "https://a.com", "A", 0);
+  ItemId b = model_.AddTab(Today(), "https://b.com", "B", 0);
+  ItemId c = model_.AddTab(Today(), "https://c.com", "C", 0);  // Today: c b a.
+  ItemId split = model_.CreateSplit({b, a}, SplitLayout::kStacked);
+  ASSERT_NE(split, kNoItem);
+  EXPECT_EQ(*model_.Children(Today()), (std::vector<ItemId>{c, split}));
+  const Item* item = model_.GetItem(split);
+  EXPECT_EQ(item->kind, ItemKind::kSplit);
+  EXPECT_EQ(item->layout, SplitLayout::kStacked);
+  EXPECT_EQ(item->children, (std::vector<ItemId>{b, a}));
+  EXPECT_EQ(model_.GetItem(a)->location.parent, split);
+}
+
+TEST_F(SidebarModelTest, SplitRules) {
+  std::vector<ItemId> tabs;
+  for (int i = 0; i < 5; ++i) {
+    tabs.push_back(model_.AddTab(Today(), "u", "t", 0));
+  }
+  ItemId fav = model_.AddTab(Favorites(), "f", "f", 0);
+  ItemId folder = model_.AddFolder(Pinned(), "F");
+
+  EXPECT_EQ(model_.CreateSplit({tabs[0]}, SplitLayout::kSideBySide), kNoItem);
+  EXPECT_EQ(model_.CreateSplit(tabs, SplitLayout::kSideBySide), kNoItem);
+  EXPECT_EQ(model_.CreateSplit({tabs[0], tabs[0]}, SplitLayout::kSideBySide),
+            kNoItem);
+  EXPECT_EQ(model_.CreateSplit({tabs[0], folder}, SplitLayout::kSideBySide),
+            kNoItem);
+  EXPECT_EQ(model_.CreateSplit({fav, tabs[0]}, SplitLayout::kSideBySide),
+            kNoItem);
+
+  ItemId split = model_.CreateSplit({tabs[0], tabs[1], tabs[2], tabs[3]},
+                                    SplitLayout::kSideBySide);
+  ASSERT_NE(split, kNoItem);
+  Location inside{Section::kToday, kNoSpace, split};
+  EXPECT_FALSE(model_.Move(tabs[4], inside, 0));  // Full.
+  EXPECT_EQ(model_.AddTab(inside, "u", "t", 0), kNoItem);
+  EXPECT_TRUE(model_.Move(tabs[3], inside, 0));   // Reordering is fine.
+  EXPECT_EQ(model_.GetItem(split)->children.front(), tabs[3]);
+  EXPECT_FALSE(model_.Move(folder, inside, 0));
+  EXPECT_EQ(model_.AddFolder(inside, "F"), kNoItem);
+  EXPECT_EQ(model_.CreateSplit({tabs[0], tabs[4]}, SplitLayout::kSideBySide),
+            kNoItem);  // tabs[0] is already in a split.
+
+  // Split Views can live in pinned folders, but not in Favorites.
+  EXPECT_TRUE(model_.Move(split, In(folder), 0));
+  EXPECT_EQ(model_.GetItem(tabs[0])->location.section, Section::kPinned);
+  EXPECT_FALSE(model_.Move(split, Favorites(), 0));
+}
+
+TEST_F(SidebarModelTest, SplitWithOneTabLeftTurnsBackIntoThatTab) {
+  ItemId x = model_.AddTab(Pinned(), "https://x.com", "X", 0);
+  ItemId a = model_.AddTab(Pinned(), "https://a.com", "A", 0, SidebarModel::kEnd);
+  ItemId b = model_.AddTab(Pinned(), "https://b.com", "B", 0, SidebarModel::kEnd);
+  ItemId split = model_.CreateSplit({a, b}, SplitLayout::kSideBySide);
+  ASSERT_TRUE(model_.Remove(a));
+  EXPECT_EQ(model_.GetItem(split), nullptr);
+  EXPECT_EQ(*model_.Children(Pinned()), (std::vector<ItemId>{x, b}));
+  EXPECT_EQ(model_.GetItem(b)->location.parent, kNoItem);
+
+  ItemId c = model_.AddTab(Pinned(), "https://c.com", "C", 0, SidebarModel::kEnd);
+  split = model_.CreateSplit({b, c}, SplitLayout::kSideBySide);
+  ASSERT_TRUE(model_.Move(b, Today(), 0));
+  EXPECT_EQ(model_.GetItem(split), nullptr);
+  EXPECT_EQ(*model_.Children(Pinned()), (std::vector<ItemId>{x, c}));
+}
+
+TEST_F(SidebarModelTest, MovingSplitOutOfTodayPinsItsTabs) {
+  ItemId a = model_.AddTab(Today(), "https://a.com", "A", 0);
+  ItemId b = model_.AddTab(Today(), "https://b.com", "B", 0);
+  ItemId split = model_.CreateSplit({a, b}, SplitLayout::kSideBySide);
+  ASSERT_TRUE(model_.Move(split, Pinned(), 0));
+  EXPECT_EQ(model_.GetItem(a)->pinned_url, "https://a.com");
+  EXPECT_EQ(model_.GetItem(b)->location.section, Section::kPinned);
+  ASSERT_TRUE(model_.Move(split, Today(), 0));
+  EXPECT_TRUE(model_.GetItem(a)->pinned_url.empty());
+}
+
+TEST_F(SidebarModelTest, SplitArchivesOnlyWhenAllTabsAreIdle) {
+  ItemId a = model_.AddTab(Today(), "https://a.com", "A", 0);
+  ItemId b = model_.AddTab(Today(), "https://b.com", "B", 0);
+  ItemId split = model_.CreateSplit({a, b}, SplitLayout::kSideBySide);
+  model_.Activate(b, 2 * kHour);
+  EXPECT_TRUE(model_.ArchiveIdle(2 * kHour, kHour, {}).empty());
+
+  std::vector<ItemId> closed = model_.ArchiveIdle(4 * kHour, kHour, {});
+  EXPECT_EQ(closed, (std::vector<ItemId>{a, b}));
+  EXPECT_EQ(model_.GetItem(split), nullptr);
+  EXPECT_EQ(model_.GetItem(a), nullptr);
+  EXPECT_EQ(model_.archive().size(), 2u);
+}
+
+TEST_F(SidebarModelTest, EditSpaceSetsNameIconAndTheme) {
+  SpaceTheme theme{{Color{106, 86, 218, 255}}, true, 0.5};
+  SpaceIcon icon{SpaceIcon::Kind::kEmoji, "\xF0\x9F\x8C\x8D"};
+  ASSERT_TRUE(model_.EditSpace(space_, "Planet", icon, theme));
+  const Space* space = model_.GetSpace(space_);
+  EXPECT_EQ(space->name, "Planet");
+  EXPECT_EQ(space->icon, icon);
+  EXPECT_EQ(space->theme, theme);
+  EXPECT_FALSE(model_.EditSpace(999, "x", {}, {}));
 }
 
 }  // namespace

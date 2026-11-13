@@ -28,8 +28,8 @@ struct ArcImport {
 
 // Reads Arc's sidebar file (~/Library/Application Support/Arc/
 // StorableSidebar.json) into one sidebar per Arc profile: Spaces, Favorites,
-// pinned tabs and folders, and Today (unpinned) tabs. Split Views come in as
-// their separate tabs. Imported tabs are marked active at `now` so
+// pinned tabs, folders and Split Views, Today (unpinned) tabs, and each
+// Space's icon and theme. Imported tabs are marked active at `now` so
 // auto-archive doesn't close them right away.
 //
 // Returns nullopt if `json` is not valid JSON in Arc's format.

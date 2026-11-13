@@ -4,7 +4,10 @@
 
 #include "browser/components/importer/core/arc_importer.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -12,7 +15,12 @@
 namespace importer {
 namespace {
 
+using sidebar::Color;
 using sidebar::ItemId;
+using sidebar::ItemKind;
+using sidebar::SpaceIcon;
+using sidebar::SpaceTheme;
+using sidebar::SplitLayout;
 using sidebar::kNoItem;
 using sidebar::kNoSpace;
 using sidebar::Location;
@@ -325,6 +333,100 @@ std::string ProfileDirectory(const Json* profile) {
   return dir ? *dir : std::string();
 }
 
+// {"icon": "planet"} is an SF Symbol name; emoji icons are assumed to be
+// {"emoji_v2": "🌍"} or {"emoji": "🌍"} (not seen in a real file yet).
+SpaceIcon ReadIcon(const Json* icon_type) {
+  if (!icon_type) {
+    return {};
+  }
+  if (const std::string* symbol = icon_type->FindString("icon")) {
+    return {SpaceIcon::Kind::kSymbol, *symbol};
+  }
+  for (const char* key : {"emoji_v2", "emoji"}) {
+    if (const std::string* emoji = icon_type->FindString(key)) {
+      return {SpaceIcon::Kind::kEmoji, *emoji};
+    }
+  }
+  return {};
+}
+
+// ponytail: strtod follows the C locale's decimal point, which Chromium keeps
+// as "."; use base::StringToDouble if this moves into the browser layer.
+double ToDouble(const Json* number) {
+  return number && number->type == Json::Type::kNumber
+             ? std::strtod(number->string.c_str(), nullptr)
+             : 0;
+}
+
+uint8_t ToChannel(double value) {
+  // Arc uses extended sRGB, which can go outside 0..1.
+  return static_cast<uint8_t>(std::lround(std::clamp(value, 0.0, 1.0) * 255));
+}
+
+// Depth-first search for the first member called `key`.
+const Json* FindDeep(const Json& value, std::string_view key) {
+  for (const JsonMember& member : value.object) {
+    if (member.key == key) {
+      return &member.value;
+    }
+    if (const Json* found = FindDeep(member.value, key)) {
+      return found;
+    }
+  }
+  for (const Json& element : value.array) {
+    if (const Json* found = FindDeep(element, key)) {
+      return found;
+    }
+  }
+  return nullptr;
+}
+
+// Every {"red", "green", "blue"} object, in order. Arc nests the background
+// colors in several enum shapes (single color, gradients); collecting them
+// generically means we don't depend on each shape.
+void CollectColors(const Json& value, std::vector<Color>& out) {
+  if (out.size() == 3) {
+    return;
+  }
+  const Json* red = value.Find("red");
+  const Json* green = value.Find("green");
+  const Json* blue = value.Find("blue");
+  if (red && green && blue) {
+    const Json* alpha = value.Find("alpha");
+    out.push_back({ToChannel(ToDouble(red)), ToChannel(ToDouble(green)),
+                   ToChannel(ToDouble(blue)),
+                   alpha ? ToChannel(ToDouble(alpha)) : uint8_t{255}});
+    return;
+  }
+  for (const JsonMember& member : value.object) {
+    CollectColors(member.value, out);
+  }
+  for (const Json& element : value.array) {
+    CollectColors(element, out);
+  }
+}
+
+// Reads windowTheme.background, e.g. {"single": {"_0": {
+//   "contentOverBackgroundAppearance": "dark", "style": {"color": {"_0": {
+//   "blendedSingleColor": {"_0": {"color": {...}, "modifiers": {
+//   "noiseFactor": 0.95}}}}}}}}}. An empty theme means Arc's default.
+SpaceTheme ReadTheme(const Json* window_theme) {
+  SpaceTheme theme;
+  const Json* background =
+      window_theme ? window_theme->Find("background") : nullptr;
+  if (!background) {
+    return theme;
+  }
+  CollectColors(*background, theme.colors);
+  const Json* appearance =
+      FindDeep(*background, "contentOverBackgroundAppearance");
+  theme.dark = appearance && appearance->type == Json::Type::kString &&
+               appearance->string == "dark";
+  theme.grain =
+      std::clamp(ToDouble(FindDeep(*background, "noiseFactor")), 0.0, 1.0);
+  return theme;
+}
+
 class ArcReader {
  public:
   ArcReader(const Json& container, TimeMs now, ArcImport& out)
@@ -370,7 +472,13 @@ class ArcReader {
   void ImportSpace(const Json& space) {
     SidebarModel& model = ModelFor(ProfileDirectory(space.Find("profile")));
     const std::string* title = space.FindString("title");
-    SpaceId id = model.AddSpace(title && !title->empty() ? *title : "Space");
+    std::string name = title && !title->empty() ? *title : "Space";
+    SpaceId id = model.AddSpace(name);
+    const Json* info = space.Find("customInfo");
+    if (info) {
+      model.EditSpace(id, name, ReadIcon(info->Find("iconType")),
+                      ReadTheme(info->Find("windowTheme")));
+    }
     ForEachPair(space.Find("containerIDs"),
                 [&](const Json& kind, const Json& container) {
                   if (kind.type != Json::Type::kString ||
@@ -436,13 +544,28 @@ class ArcReader {
                      depth + 1);
       return;
     }
-    if (is_folder || data->Find("splitView")) {
-      // No split items yet, and folders only live in Pinned: keep the tabs,
-      // drop the grouping.
-      ImportChildren(model, where, id, depth + 1);
+    const Json* split = data->Find("splitView");
+    if (!is_folder && !split) {
+      ++out_.skipped;  // Easels, Notes, Arc's own pages, ...
       return;
     }
-    ++out_.skipped;  // Easels, Notes, Arc's own pages, ...
+    // Import the tabs flat, then group a Split View's tabs back together.
+    // Folders outside Pinned stay flat; so does a Split View the model
+    // refuses (in Favorites, or more than kMaxSplitTabs tabs).
+    const std::vector<ItemId>* list = model.Children(where);
+    size_t before = list ? list->size() : 0;
+    ImportChildren(model, where, id, depth + 1);
+    if (split && list) {
+      std::vector<ItemId> tabs(list->begin() + static_cast<ptrdiff_t>(before),
+                               list->end());
+      std::erase_if(tabs, [&](ItemId tab) {
+        return model.GetItem(tab)->kind != ItemKind::kTab;
+      });
+      const std::string* orientation = split->FindString("layoutOrientation");
+      model.CreateSplit(tabs, orientation && *orientation == "vertical"
+                                  ? SplitLayout::kStacked
+                                  : SplitLayout::kSideBySide);
+    }
   }
 
   const Json* FindItem(const std::string& id) const {

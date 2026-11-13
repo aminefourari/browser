@@ -26,9 +26,10 @@ includes are `"browser/components/..."` and gtest is `"testing/gtest/include/gte
 `test_core.sh` fakes both include roots with symlinks in `out/core/include/`.
 
 - `components/sidebar/core/` — SidebarModel: Favorites, per-Space pinned tree + Today
-  tabs, folders, pin/unpin, pinned-URL reset, auto-archive and restore.
+  tabs, folders, Split Views (2–4 tabs, dissolve at 1), Space name/icon/theme,
+  pin/unpin, pinned-URL reset, auto-archive and restore.
 - `components/importer/core/` — Arc importer: parses `StorableSidebar.json` (own small JSON
-  parser) into one SidebarModel per Arc profile. Split Views are flattened to tabs.
+  parser) into one SidebarModel per Arc profile, including Split Views and Space themes.
 
 ## Stack
 
