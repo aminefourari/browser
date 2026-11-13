@@ -6,12 +6,26 @@ the source of truth for architecture, features and roadmap.
 
 ## Status
 
-Phase 0 (repo + plan). **We are not building Chromium locally yet** (no capable machine).
+Phase 2 groundwork (core logic). **We are not building Chromium locally yet** (no capable machine).
 Write features following `docs/PLAN.md` §5: core logic in plain C++20 with no Chromium
 headers (compile and test it with the system `clang++`), WebUI pages in TypeScript tested
 in a normal browser against a fake backend, and Chromium integration code kept thin and
 checked by reading Chromium's source at `CHROMIUM_VERSION`. Never claim integration code
-compiles; say it is unbuilt. Add real build/test commands here as they appear.
+compiles; say it is unbuilt.
+
+## Commands
+
+- `scripts/test_core.sh` — builds and runs every `components/*/core` GoogleTest suite with
+  the system clang++ (ASan + UBSan, `-Werror`). Needs `brew install googletest`.
+
+## Layout
+
+Repo root is the overlay that lives at `chromium/src/browser/` (like `brave-core`), so
+includes are `"browser/components/..."` and gtest is `"testing/gtest/include/gtest/gtest.h"`;
+`test_core.sh` fakes both include roots with symlinks in `out/core/include/`.
+
+- `components/sidebar/core/` — SidebarModel: Favorites, per-Space pinned tree + Today
+  tabs, folders, pin/unpin, pinned-URL reset, auto-archive and restore.
 
 ## Stack
 
@@ -21,7 +35,7 @@ for Shields.
 
 ## Conventions
 
-- Change Chromium in this order of preference: new code in `src/` → `chromium_src/`
+- Change Chromium in this order of preference: new code in this repo → `chromium_src/`
   override → small `.patch` in `patches/`. Patch count is a cost; keep it low.
 - C++ follows the Chromium style guide (`clang-format`, `gn format`).
 - Conventional Commits, signed off (`git commit -s`), squash-merge PRs into `main`.

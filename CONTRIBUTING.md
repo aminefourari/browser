@@ -47,7 +47,7 @@ have the right to submit it under the project license.
 
 ## Code rules
 
-- **Touch Chromium as little as possible.** Prefer, in order: new code in `src/` →
+- **Touch Chromium as little as possible.** Prefer, in order: new code in this repo →
   a `chromium_src/` override → a small `.patch`. PRs that add patches explain why the
   other two options don't work.
 - C++ follows the [Chromium style guide](https://chromium.googlesource.com/chromium/src/+/main/styleguide/c++/c++.md)

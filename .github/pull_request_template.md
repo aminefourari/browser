@@ -12,6 +12,6 @@
 
 - [ ] Commits follow Conventional Commits and are signed off (`git commit -s`)
 - [ ] Lint, patch-apply check and tests pass locally
-- [ ] No new Chromium patches — or the PR explains why `src/` or `chromium_src/` can't do it
+- [ ] No new Chromium patches — or the PR explains why new code or a `chromium_src/` override can't do it
 - [ ] No new Mojo interfaces, WebUI bindings or permissions — or they are called out above for security review
 - [ ] Docs updated if behaviour changed

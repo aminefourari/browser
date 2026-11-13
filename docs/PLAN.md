@@ -18,25 +18,25 @@ Chromium stable.
 ## 2. Repository layout (Brave-style)
 
 Brave splits this into `brave-browser` (build tooling) and `brave-core` (the code). We keep
-both in one repo until it hurts.
+both in one repo until it hurts. Like `brave-core`, the repo root is what sits at
+`chromium/src/browser/`, so includes read `#include "browser/components/..."` (renamed
+once the project has a name).
 
 ```
-browser/
-├── scripts/          # init (fetch Chromium + depot_tools), sync, apply patches, build, package
-├── CHROMIUM_VERSION  # the exact Chromium tag we build on
-├── src/              # our code, checked out into chromium/src/<name>/
-│   ├── browser/      # C++: sidebar, spaces, command bar, split view, peek, boosts…
-│   ├── components/   # C++ services shared across platforms (storage, archive, shields)
-│   ├── chromium_src/ # override files that replace/extend Chromium sources at compile time
-│   ├── ui/webui/     # TypeScript WebUI pages: command bar, settings, library, onboarding
-│   ├── app/          # branding: name, icons, strings, theme
-│   └── BUILD.gn
-├── patches/          # small .patch files against Chromium; the last resort
+browser/                # repo root = chromium/src/browser/
+├── browser/            # C++ glued into Chromium: sidebar Views, Spaces, command bar, split view…
+├── components/         # C++ features; each has core/ (plain C++, no Chromium) + Chromium glue
+├── chromium_src/       # override files that replace/extend Chromium sources at compile time
+├── ui/webui/           # TypeScript WebUI pages: command bar, settings, library, onboarding
+├── app/                # branding: name, icons, strings, theme
+├── patches/            # small .patch files against Chromium; the last resort
+├── scripts/            # fetch Chromium + depot_tools, apply patches, build, package, test_core.sh
+├── CHROMIUM_VERSION    # the exact Chromium tag we build on
 └── docs/
 ```
 
 **Change rules, in order of preference**
-1. New code in `src/` behind our own GN targets — no Chromium file touched.
+1. New code in this repo behind our own GN targets — no Chromium file touched.
 2. `chromium_src/` override — compile-time replacement of a single Chromium file, keeping the original reachable.
 3. A small `.patch` in `patches/` — only for hooks we can't add any other way. Every patch is reviewed for size.
 
@@ -157,9 +157,9 @@ written and tested on any laptop:
 
 | Layer | Where | How we test it now |
 |---|---|---|
-| **Core logic**: sidebar tree, auto-archive rules, Spaces, Air Traffic Control matching, Boost matching, Arc/Chrome importers | `src/components/<feature>/core/`, plain C++20 (standard library only, no Chromium `base::`) | Built with the system `clang++` and tested with small standalone tests |
-| **WebUI pages**: command bar, settings, library, archive | `src/ui/webui/<page>/`, TypeScript + Lit (what Chromium's WebUI uses) | Runs in any browser against a fake backend that returns sample data |
-| **Chromium integration**: Views sidebar, KeyedServices, Mojo interfaces, `chromium_src/` overrides, patches | `src/browser/`, `src/chromium_src/`, `patches/` | Written against Chromium's API at `CHROMIUM_VERSION`; **not compiled yet**. Kept thin: it only connects the core logic to Chromium. |
+| **Core logic**: sidebar tree, auto-archive rules, Spaces, Air Traffic Control matching, Boost matching, Arc/Chrome importers | `components/<feature>/core/`, plain C++20 (standard library only, no Chromium `base::`, no `<chrono>`) | GoogleTest unit tests (same files Chromium's `unit_tests` will run), via `scripts/test_core.sh` |
+| **WebUI pages**: command bar, settings, library, archive | `ui/webui/<page>/`, TypeScript + Lit (what Chromium's WebUI uses) | Runs in any browser against a fake backend that returns sample data |
+| **Chromium integration**: Views sidebar, KeyedServices, Mojo interfaces, `chromium_src/` overrides, patches | `browser/`, `components/<feature>/` (outside `core/`), `chromium_src/`, `patches/` | Written against Chromium's API at `CHROMIUM_VERSION`; **not compiled yet**. Kept thin: it only connects the core logic to Chromium. |
 
 Rules for this mode:
 - Core logic must not include Chromium headers, so it compiles without Chromium.
