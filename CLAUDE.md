@@ -15,7 +15,8 @@ compiles; say it is unbuilt.
 
 ## Commands
 
-- `scripts/test_core.sh` — builds and runs every `components/*/core` GoogleTest suite with
+- `scripts/test_core.sh` — builds all `components/*/core` code and tests into one binary
+  (`out/core/core_unittests`, extra args go to gtest, e.g. `--gtest_filter=Arc*`) with
   the system clang++ (ASan + UBSan, `-Werror`). Needs `brew install googletest`.
 
 ## Layout
@@ -26,6 +27,8 @@ includes are `"browser/components/..."` and gtest is `"testing/gtest/include/gte
 
 - `components/sidebar/core/` — SidebarModel: Favorites, per-Space pinned tree + Today
   tabs, folders, pin/unpin, pinned-URL reset, auto-archive and restore.
+- `components/importer/core/` — Arc importer: parses `StorableSidebar.json` (own small JSON
+  parser) into one SidebarModel per Arc profile. Split Views are flattened to tabs.
 
 ## Stack
 
