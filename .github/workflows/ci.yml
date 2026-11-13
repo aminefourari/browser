@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core C++ tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install googletest
+      - run: scripts/test_core.sh
+
+  webui:
+    name: WebUI tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  pr-rules:
+    name: PR rules
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Title is a Conventional Commit
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if ! printf '%s' "$TITLE" | grep -Eq '^(feat|fix|perf|refactor|docs|test|build|ci|chore)(\([a-z0-9-]+\))?!?: .+'; then
+            echo "::error::PR title must be a Conventional Commit, e.g. 'feat(sidebar): auto-archive Today tabs'. Got: $TITLE"
+            exit 1
+          fi
+      - name: Every commit is signed off (DCO)
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=""
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            git show -s --format=%B "$c" | grep -q '^Signed-off-by: ' || missing="$missing $c"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Commits without a DCO sign-off:$missing. Fix with: git rebase --signoff origin/main && git push --force-with-lease"
+            exit 1
+          fi

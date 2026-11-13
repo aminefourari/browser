@@ -50,7 +50,9 @@ for Shields.
 - Change Chromium in this order of preference: new code in this repo → `chromium_src/`
   override → small `.patch` in `patches/`. Patch count is a cost; keep it low.
 - C++ follows the Chromium style guide (`clang-format`, `gn format`).
-- Conventional Commits, signed off (`git commit -s`), squash-merge PRs into `main`.
+- Every change goes through a PR from a branch; never push to `main` (branch protection
+  requires PRs + green CI). Conventional Commit PR titles, signed-off commits (`git commit -s`),
+  squash-merge. Full rules for issues/PRs: `CONTRIBUTING.md`. CI: `.github/workflows/ci.yml`.
 - Any new Mojo interface, WebUI binding or permission must be called out in the PR for security review.
 - Never use the "Arc" or "Brave" names or assets in the product (trademarks).
 - License is MPL-2.0; new source files carry the MPL-2.0 header.

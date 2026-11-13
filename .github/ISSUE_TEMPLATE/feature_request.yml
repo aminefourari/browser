@@ -2,6 +2,13 @@ name: Feature request
 description: Suggest an idea
 labels: [enhancement, triage]
 body:
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched open and closed issues and Discussions, and this isn't a duplicate.
+          required: true
   - type: textarea
     id: problem
     attributes:
@@ -14,6 +21,20 @@ body:
       label: Proposed solution
     validations:
       required: true
+  - type: dropdown
+    id: arc
+    attributes:
+      label: Did Arc have this?
+      options:
+        - "Yes"
+        - "No, it's new"
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: arc-behaviour
+    attributes:
+      label: If Arc had it, how did it work?
   - type: textarea
     id: alternatives
     attributes:

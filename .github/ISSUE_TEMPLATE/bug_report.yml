@@ -2,6 +2,15 @@ name: Bug report
 description: Something is broken
 labels: [bug, triage]
 body:
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched open and closed issues and this isn't a duplicate.
+          required: true
+        - label: This is not a security vulnerability (those go to SECURITY.md).
+          required: true
   - type: textarea
     id: what
     attributes:
@@ -22,7 +31,7 @@ body:
     id: version
     attributes:
       label: Browser version
-      description: Settings → About
+      description: Settings → About, or the commit hash if you built it yourself
     validations:
       required: true
   - type: dropdown
