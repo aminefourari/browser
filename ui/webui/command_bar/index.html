@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- Development harness: the command bar against FakeBackend. `pnpm dev`. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Command Bar (dev)</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+      padding: 15vh 16px 16px;
+      box-sizing: border-box;
+      background: linear-gradient(135deg, rgb(106 86 218), rgb(65 90 93));
+      font: 13px/1.4 system-ui, -apple-system, sans-serif;
+    }
+    #log {
+      width: min(640px, calc(100vw - 32px));
+      color: rgb(255 255 255 / 0.85);
+    }
+  </style>
+  <script type="module">
+    import './command_bar_app.ts';
+    import {FakeBackend} from './backend.ts';
+
+    const log = document.getElementById('log');
+    const bar = document.createElement('command-bar-app');
+    bar.backend = new FakeBackend(action => {
+      log.textContent = `Last action: ${action}`;
+    });
+    // Mount after the backend is set, so the first search uses it.
+    document.body.prepend(bar);
+  </script>
+</head>
+<body>
+  <div id="log" aria-live="polite">Type a URL, a search, or a command.</div>
+</body>
+</html>

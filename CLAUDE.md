@@ -18,6 +18,9 @@ compiles; say it is unbuilt.
 - `scripts/test_core.sh` — builds all `components/*/core` code and tests into one binary
   (`out/core/core_unittests`, extra args go to gtest, e.g. `--gtest_filter=Arc*`) with
   the system clang++ (ASan + UBSan, `-Werror`). Needs `brew install googletest`.
+- `pnpm install`, then: `pnpm test` (WebUI logic, `node --test` on `ui/**/*.test.ts`),
+  `pnpm typecheck` (tsc, strict), `pnpm dev` (command bar in a normal browser with
+  FakeBackend).
 
 ## Layout
 
@@ -30,6 +33,11 @@ includes are `"browser/components/..."` and gtest is `"testing/gtest/include/gte
   pin/unpin, pinned-URL reset, auto-archive and restore.
 - `components/importer/core/` — Arc importer: parses `StorableSidebar.json` (own small JSON
   parser) into one SidebarModel per Arc profile, including Split Views and Space themes.
+- `ui/webui/command_bar/` — Arc-style command bar (Lit). `backend.ts` is the future Mojo
+  interface + FakeBackend; `command_bar_logic.ts` holds URL-vs-search, command matching
+  and result order (tested). Lit elements use `static properties` + `declare` fields and
+  no decorators (Chromium WebUI style, and node can strip the types). Import with `.ts`
+  extensions.
 
 ## Stack
 

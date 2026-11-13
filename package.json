@@ -1,0 +1,16 @@
+{
+  "name": "browser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite ui/webui/command_bar",
+    "test": "node --test \"ui/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "lit": "^3.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}
