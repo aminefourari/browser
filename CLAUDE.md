@@ -6,8 +6,12 @@ the source of truth for architecture, features and roadmap.
 
 ## Status
 
-Phase 0 (repo + plan). No code yet. When phase 1 lands, add the real init/build/test/lint
-commands here (planned: `scripts/` wrapping depot_tools, gclient, GN and Ninja).
+Phase 0 (repo + plan). **We are not building Chromium locally yet** (no capable machine).
+Write features following `docs/PLAN.md` §5: core logic in plain C++20 with no Chromium
+headers (compile and test it with the system `clang++`), WebUI pages in TypeScript tested
+in a normal browser against a fake backend, and Chromium integration code kept thin and
+checked by reading Chromium's source at `CHROMIUM_VERSION`. Never claim integration code
+compiles; say it is unbuilt. Add real build/test commands here as they appear.
 
 ## Stack
 

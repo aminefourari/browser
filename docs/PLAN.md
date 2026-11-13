@@ -150,7 +150,25 @@ History  = Chromium history (already full-text searchable)
 - Ask about this page
 - Auto-group/tidy tabs
 
-## 5. Roadmap
+## 5. Developing without a Chromium build (current mode)
+
+Until we have a machine that builds Chromium, every feature is split so most of it can be
+written and tested on any laptop:
+
+| Layer | Where | How we test it now |
+|---|---|---|
+| **Core logic**: sidebar tree, auto-archive rules, Spaces, Air Traffic Control matching, Boost matching, Arc/Chrome importers | `src/components/<feature>/core/`, plain C++20 (standard library only, no Chromium `base::`) | Built with the system `clang++` and tested with small standalone tests |
+| **WebUI pages**: command bar, settings, library, archive | `src/ui/webui/<page>/`, TypeScript + Lit (what Chromium's WebUI uses) | Runs in any browser against a fake backend that returns sample data |
+| **Chromium integration**: Views sidebar, KeyedServices, Mojo interfaces, `chromium_src/` overrides, patches | `src/browser/`, `src/chromium_src/`, `patches/` | Written against Chromium's API at `CHROMIUM_VERSION`; **not compiled yet**. Kept thin: it only connects the core logic to Chromium. |
+
+Rules for this mode:
+- Core logic must not include Chromium headers, so it compiles without Chromium.
+  Integration code converts between Chromium types (`GURL`, `base::Time`) and core types.
+- Integration code is reviewed by reading Chromium's source at our pinned version, since we can't compile it.
+- When a build machine is available (new laptop, or a rented cloud machine for a day), the
+  first job is compiling all integration code and fixing what breaks.
+
+## 6. Roadmap
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
@@ -162,7 +180,7 @@ History  = Chromium history (already full-text searchable)
 | **5. Ship** | Signed/notarized builds, auto-update, Windows + Linux, perf budget, settings UI, onboarding | Public beta |
 | **6. Later** | E2E-encrypted sync, AI features, Library/Capture, Live Folders, Easels/Notes, mobile | — |
 
-## 6. Risks
+## 7. Risks
 
 - **Chromium rebases every 4 weeks.** Keep the patch count low (rules in §2) and track stable on a schedule.
 - **Build infrastructure.** Hosted CI runners can't build Chromium in time. CI on pull requests runs
