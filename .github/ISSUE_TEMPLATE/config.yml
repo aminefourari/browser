@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/aminefourari/browser/security/advisories/new
+    about: Never report security issues publicly. Use a private advisory.
+  - name: Questions & ideas
+    url: https://github.com/aminefourari/browser/discussions
+    about: Ask questions and discuss ideas in Discussions.
