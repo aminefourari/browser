@@ -2,7 +2,7 @@
 
 # Browser
 
-An open-source, sidebar-first web browser inspired by the ideas that made Arc loved:
+An open-source, sidebar-first web browser built on Chromium, inspired by the ideas that made Arc loved:
 vertical tabs, Spaces, auto-archiving tabs, Split View, a command bar, and a browser that
 gets out of your way.
 
@@ -20,7 +20,8 @@ be taken away again.
 - **Sidebar-first**: pinned tabs, folders, and "Today" tabs that archive themselves.
 - **Spaces & Profiles**: separate contexts with their own tabs, themes and logins.
 - **Keyboard-driven**: everything reachable from the command bar.
-- **Private by default**: no account, no telemetry unless you opt in.
+- **Private by default**: built-in ad and tracker blocking, no Google account, no telemetry unless you opt in.
+- **All Chrome extensions**: it's Chromium underneath.
 - **Cross-platform**: macOS first, then Windows and Linux.
 - **Bring your Arc**: import your Arc sidebar, Spaces and pinned tabs.
 
@@ -31,5 +32,5 @@ Found a security issue? Follow [SECURITY.md](SECURITY.md) — never open a publi
 
 ## License
 
-[MIT](LICENSE). Not affiliated with The Browser Company. "Arc" is their trademark and is
+[MPL-2.0](LICENSE), the same license Zen, Firefox and Brave use. Not affiliated with The Browser Company. "Arc" is their trademark and is
 used here only to describe the inspiration.

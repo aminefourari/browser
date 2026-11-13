@@ -1,69 +1,104 @@
 # Plan: architecture, features, roadmap
 
-## 1. Engine choice
+## 1. Engine: Chromium, built the Brave way
 
-| Option | Pros | Cons |
-|---|---|---|
-| **Electron (chosen)** | Full Chromium engine, cross-platform, TypeScript end to end, Chrome extensions via `electron-chrome-extensions`, fast iteration | Trails Chrome security patches by days to weeks; no Widevine DRM unless we use castLabs' Electron fork; partial extension API coverage |
-| Chromium fork (Arc's way) | Full control, full extension support | 40+ GB checkout, hours-long builds, a dedicated team just to rebase. Not for an early OSS project |
-| Firefox fork (Zen's way) | Gecko, great privacy story | No Chrome extensions; Gecko UI internals are hard |
-| Native WebKit (Swift) | Lightest, best on Mac | macOS only, no Chrome extensions |
+We build on Chromium (the open-source code behind Chrome) and keep our changes as a thin
+layer on top, the way Brave does. We never edit a copy of Chromium in place, so moving to
+each new Chromium release (every 4 weeks) stays a rebase of our layer, not a merge war.
 
-**Decision:** Electron + castLabs ECS (for Widevine, so Netflix/Spotify work). The UI layer is
-kept independent of Electron APIs so a Chromium fork stays possible later.
+Why not the alternatives:
+- **Electron**: quick to start, but it trails Chrome's security fixes, supports only part of the
+  extension APIs, and can't replace the browser's own window and tab strip.
+- **Firefox (Zen's way)**: no Chrome extensions, a much smaller share of the web tests against Gecko.
+- **Native WebKit**: macOS only.
 
-## 2. Architecture
+Cost we accept: a ~100 GB checkout, multi-hour first builds, and a standing duty to track
+Chromium stable.
+
+## 2. Repository layout (Brave-style)
+
+Brave splits this into `brave-browser` (build tooling) and `brave-core` (the code). We keep
+both in one repo until it hurts.
 
 ```
-┌──────────────────────── Main process (Node) ────────────────────────┐
-│ WindowManager   TabManager      SessionManager   Store (SQLite)       │
-│ windows,        WebContentsView per profile →    sidebar tree,        │
-│ layout          per tab, sleep/ session partition history (FTS5),     │
-│                 discard         `persist:<id>`   settings, downloads  │
-│ ExtensionHost   AdBlock         Boosts           Updater              │
-│ (chrome ext.)   (Ghostery lib)  (CSS/JS inject)  (electron-updater)   │
-└──────────▲──────────────────────────────────────────────▲─────────────┘
-           │ typed IPC (contextBridge, one preload)       │ state patches
-┌──────────┴───────── Chrome UI renderer (React) ────────┴─────────────┐
-│ Sidebar · Command bar · Split View layout · Peek · Settings · Library │
-└───────────────────────────────────────────────────────────────────────┘
-┌──── Web content (one WebContentsView per live tab) ───┐
-│ sandbox: true, contextIsolation, NO preload, no Node  │
-└───────────────────────────────────────────────────────┘
+browser/
+├── scripts/          # init (fetch Chromium + depot_tools), sync, apply patches, build, package
+├── CHROMIUM_VERSION  # the exact Chromium tag we build on
+├── src/              # our code, checked out into chromium/src/<name>/
+│   ├── browser/      # C++: sidebar, spaces, command bar, split view, peek, boosts…
+│   ├── components/   # C++ services shared across platforms (storage, archive, shields)
+│   ├── chromium_src/ # override files that replace/extend Chromium sources at compile time
+│   ├── ui/webui/     # TypeScript WebUI pages: command bar, settings, library, onboarding
+│   ├── app/          # branding: name, icons, strings, theme
+│   └── BUILD.gn
+├── patches/          # small .patch files against Chromium; the last resort
+└── docs/
 ```
 
-**Rules**
-- **Main process owns all state.** The UI renders it and sends intents (`tab.open`,
-  `space.switch`); main applies them and pushes changes. One source of truth, no sync bugs.
-- **Web pages get nothing.** No preload, sandboxed, context isolation, Electron fuses
-  locked down, strict permission handler (camera, mic, location, notifications prompt per site).
-- **Tabs are data first, views second.** A sidebar item exists without a live
-  `WebContentsView`; views are created on activation and discarded when idle (memory).
-- **Profile = session partition.** Cookies/storage are isolated per profile; Spaces point
-  at a profile.
+**Change rules, in order of preference**
+1. New code in `src/` behind our own GN targets — no Chromium file touched.
+2. `chromium_src/` override — compile-time replacement of a single Chromium file, keeping the original reachable.
+3. A small `.patch` in `patches/` — only for hooks we can't add any other way. Every patch is reviewed for size.
 
-**Stack:** TypeScript (strict), Electron + electron-vite, React for the chrome UI,
-`better-sqlite3` for storage, `electron-chrome-extensions`, `@ghostery/adblocker-electron`,
-`electron-builder` for signed/notarized builds, Vitest + Playwright for tests, pnpm.
+## 3. Architecture
+
+```
+┌────────────────────── Browser process (C++) ───────────────────────┐
+│ Window frame (Views)                                                │
+│  ├─ Sidebar (Views)  ← replaces the horizontal tab strip           │
+│  ├─ Content area: 1 tab, or Split View (2–4 panes), or Peek overlay │
+│  └─ Command bar (WebUI, TypeScript)  ← replaces the omnibox popup   │
+│                                                                     │
+│ Per-profile services (KeyedService)                                 │
+│  SpacesService  SidebarModel  ArchiveService  BoostsService         │
+│  AirTrafficControl  ShieldsService (adblock-rust)  Importers        │
+│  Storage: SQLite in the profile directory                           │
+└──────────▲───────────────────────────────────────────▲──────────────┘
+           │ Mojo (typed IPC)                           │ Mojo
+┌──────────┴─────────────┐               ┌─────────────┴───────────────┐
+│ WebUI pages (TS)       │               │ Web pages (renderer)         │
+│ command bar, settings, │               │ Chromium sandbox, untouched  │
+│ library, archive       │               │ site isolation               │
+└────────────────────────┘               └──────────────────────────────┘
+```
+
+**Key decisions**
+- **Native sidebar (Views), WebUI for everything else.** The sidebar must handle drag & drop,
+  hundreds of items and tab state at native speed, so it's C++ Views built on Chromium's
+  `TabStripModel`. Command bar, settings, library and archive are WebUI (TypeScript), which
+  is faster to build and easier for contributors.
+- **Sidebar items are data; tabs are live pages.** Pinned tabs, folders and favorites live in
+  our SQLite store. A real Chromium tab exists only when an item is open; idle tabs are
+  discarded with Chromium's built-in tab discarding.
+- **Profiles are Chromium profiles.** Cookies, history and extensions are isolated per profile for free.
+- **A Space is a filtered view of one window's tabs**, plus its own pinned items and theme.
+  Switching Spaces swaps which tabs the sidebar shows; it doesn't open a new window.
+- **Privacy like Brave, without crypto/ads.** Use Brave's open-source `adblock-rust` engine
+  (MPL-2.0) for ads/trackers. Ship with Google sign-in, sync and telemetry removed, using
+  ungoogled-chromium's patches as a reference. Proxy the Google services we keep (Safe
+  Browsing) so they don't identify users.
+
+**Languages & tools:** C++ (Chromium style, `clang-format`), TypeScript for WebUI, GN/Ninja,
+Python for build scripts, Node for the scripts wrapper. Tests: Chromium's `unit_tests` /
+`browser_tests` targets for our code, plus WebUI tests.
 
 **Data model (simplified)**
 ```
-Profile  { id, name, partition }
-Space    { id, profileId, name, icon, theme: { gradient, mode } }
-Item     { id, spaceId | null (favorite), parentId, kind: folder | tab,
+Profile  = Chromium profile
+Space    { id, name, icon, theme: { gradient, mode } }
+Item     { id, spaceId | null (favorite), parentId, kind: folder | tab | split,
            pinned, title, url, pinnedUrl, order, lastActiveAt }
-History  { url, title, visitedAt, profileId }   -- FTS5 index for the command bar
 Rule     { pattern, spaceId }                    -- Air Traffic Control
 Boost    { domain, css, js, zapSelectors, enabled }
+History  = Chromium history (already full-text searchable)
 ```
 
-## 3. Arc feature inventory
+## 4. Arc feature inventory
 
 ### Sidebar & tabs
 - Vertical tab sidebar; can be hidden (`Cmd+S`) for full-bleed content
-- **Favorites**: icon grid at the top, shared across Spaces of a profile, with badges (unread mail, etc.)
-- **Pinned tabs** per Space, in nested **folders**; a pinned tab remembers its original URL and
-  can reset back to it
+- **Favorites**: icon grid at the top, shared across a profile's Spaces, with badges (unread mail, etc.)
+- **Pinned tabs** per Space, in nested **folders**; a pinned tab remembers its original URL and can reset to it
 - **Today / unpinned tabs** auto-archive after 12h / 24h / 7d / 30d
 - **Archive**: searchable list of auto-closed tabs, one-click restore
 - Rename tabs, duplicate, drag & drop everywhere, multi-select
@@ -73,24 +108,29 @@ Boost    { domain, css, js, zapSelectors, enabled }
 ### Spaces & Profiles
 - **Spaces**: separate tab sets with name, icon and gradient theme; switch with `Ctrl+1..9` or swipe
 - **Profiles**: separate logins/cookies/history/extensions; each Space belongs to a profile
-- **Air Traffic Control**: route URLs opened from other apps to a chosen Space by rule
+- **Air Traffic Control**: route links opened from other apps to a chosen Space by rule
 
 ### Navigation & search
 - **Command bar** (`Cmd+T`, `Cmd+L`): one box for URLs, search, open tabs, history,
-  bookmarks, and commands ("New Space", "Toggle dark mode", "Copy URL")
+  bookmarks and commands ("New Space", "Toggle dark mode", "Copy URL")
 - Site search shortcuts (type `yt` + Tab → search YouTube)
-- Copy URL (`Cmd+Shift+C`), reopen closed tab (`Cmd+Shift+T`), back/forward with gestures
-- Custom search engine, search suggestions (opt-in)
+- Copy URL (`Cmd+Shift+C`), reopen closed tab (`Cmd+Shift+T`), swipe back/forward
+- Choice of search engine, search suggestions (opt-in)
 
 ### Windows & views
-- **Split View**: up to 4 tabs side by side or stacked, saved as a sidebar item
+- **Split View**: up to 4 tabs side by side or stacked, saved as one sidebar item
 - **Peek**: links from pinned tabs/favorites open in an overlay instead of a new tab
-- **Little Arc–style mini window**: quick throwaway window for links from other apps; promote it to a Space
-- Developer mode: compact URL bar showing host/port, console shortcut for localhost
+- **Mini window** (Arc's "Little Arc"): quick throwaway window for links from other apps; promote it to a Space
+- Developer mode: compact URL bar showing host/port
 
 ### Personalisation
 - **Boosts**: per-site custom CSS/JS, font/colour tweaks, and "Zap" (click to hide elements)
 - Theme picker: gradients, grain, light/dark per Space; app icon variants
+
+### Privacy (Brave-style "Shields")
+- Built-in ad and tracker blocking (adblock-rust + standard filter lists), per-site toggle
+- Automatic HTTPS upgrade, cookie and referrer tightening, fingerprinting protections
+- No Google account, no telemetry by default; crash reports opt-in
 
 ### Library & tools
 - Library: downloads, media, captures in one place
@@ -98,33 +138,38 @@ Boost    { domain, css, js, zapSelectors, enabled }
 - Notes/Easels (whiteboard of clippings) — low priority
 
 ### Platform
-- Chrome extensions (Chrome Web Store install)
-- Ad/tracker blocker built in (Arc relied on extensions; we ship one)
+- Chrome Web Store extensions (native Chromium support)
 - Import from Chrome, Safari, Firefox and **Arc** (`StorableSidebar.json`: Spaces, pinned tabs, folders)
-- Password manager integration (system keychain + extension support); passkeys
-- Sync across devices (end-to-end encrypted)
-- Auto-update, signed builds on macOS, Windows, Linux
+- Passwords and passkeys (Chromium's password manager)
+- Sync across devices — our own end-to-end encrypted server (Brave runs its own `go-sync`)
+- Auto-update (Sparkle on macOS, Omaha on Windows, package repos on Linux)
 
-### AI ("Arc Max" equivalents) — opt-in, bring your own key or local model
-- Tidy tab titles, tidy downloaded file names
+### AI ("Arc Max" equivalents) — opt-in, bring your own key or a local model
+- Tidy tab titles and downloaded file names
 - Hover-link preview summaries
 - Ask about this page
 - Auto-group/tidy tabs
 
-## 4. Roadmap
+## 5. Roadmap
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
-| **0. Foundation** ✅ | Repo, license, rules, plan | This commit |
-| **1. Shell (MVP)** | Electron app, one window, one profile; sidebar with vertical tabs; command bar (URL + search + open tabs); back/forward/reload; persistence across restarts; history; downloads; keyboard shortcuts; CI (lint/typecheck/test/build) | Usable as a daily driver for basic browsing on macOS |
-| **2. Arc core** | Pinned vs Today tabs + auto-archive + Archive; folders; Favorites; Spaces with themes; Profiles (partitions); Split View; Peek; mini window; reopen closed tab | A former Arc user feels at home |
-| **3. Power** | Chrome extensions; ad blocker; Boosts + Zap; Air Traffic Control; importers (Arc first); site search; media controls + auto-PiP; Widevine | Switch-over without losing anything |
-| **4. Ship** | Signed/notarized builds, auto-update, Windows + Linux, tab discarding/perf budget, opt-in crash reports, settings UI, onboarding | Public beta |
-| **5. Later** | E2E-encrypted sync (CRDT), AI features, Library/Capture, Live Folders, Easels/Notes, mobile companion | — |
+| **0. Foundation** ✅ | Repo, license, rules, plan | Done |
+| **1. Fork tooling** | `scripts/` to fetch Chromium at `CHROMIUM_VERSION`, apply patches, build, package; our name and icons; Google services off; CI checks that patches still apply | A branded build runs on macOS from one command |
+| **2. Shell** | Sidebar replaces the tab strip; command bar; hidden toolbar; pinned vs Today tabs; session restore | Daily-driver for basic browsing on macOS |
+| **3. Arc core** | Auto-archive + Archive; folders; Favorites; Spaces with themes; Profiles in Spaces; Split View; Peek; mini window | A former Arc user feels at home |
+| **4. Power & privacy** | Shields (adblock-rust); Boosts + Zap; Air Traffic Control; importers (Arc first); site search; media controls + auto-PiP; Widevine | Switch-over without losing anything |
+| **5. Ship** | Signed/notarized builds, auto-update, Windows + Linux, perf budget, settings UI, onboarding | Public beta |
+| **6. Later** | E2E-encrypted sync, AI features, Library/Capture, Live Folders, Easels/Notes, mobile | — |
 
-## 5. Risks
+## 6. Risks
 
-- **Security lag vs Chrome** — track Electron stable aggressively; automate bumps with Dependabot + CI.
-- **Extension coverage** — some MV3 APIs missing; publish a compatibility list.
-- **Memory** — many sidebar tabs must not mean many live renderers; discard is mandatory, not an optimisation.
-- **Trademark** — never use the Arc name or assets in the product.
+- **Chromium rebases every 4 weeks.** Keep the patch count low (rules in §2) and track stable on a schedule.
+- **Build infrastructure.** Hosted CI runners can't build Chromium in time. CI on pull requests runs
+  lint + "patches apply" + WebUI tests; full builds run on self-hosted machines with a shared build cache.
+- **Widevine (Netflix, Spotify).** Needs a license agreement with Google and signed builds;
+  start the application early.
+- **Google API keys.** Without them some features (translation, location, Safe Browsing) need
+  replacements or our own proxy.
+- **Manifest V2 is gone upstream.** Shields is built in, so we don't depend on MV2 ad blockers.
+- **Trademark.** Never use the Arc or Brave names or assets in the product.

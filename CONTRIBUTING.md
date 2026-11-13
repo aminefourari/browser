@@ -14,7 +14,9 @@ Thanks for helping build an open browser. This file is the rulebook.
 
 1. Fork, then branch from `main`: `feat/split-view`, `fix/tab-crash`, `docs/readme`.
 2. Keep PRs small and focused — one concern per PR.
-3. Make sure lint, typecheck and tests pass.
+3. Make sure lint, the patch-apply check and tests pass. Building Chromium needs a strong
+   machine (~100 GB disk, 16 GB+ RAM); WebUI-only changes can be checked with the faster
+   WebUI tests.
 4. Open the PR against `main` and fill in the template.
 5. A maintainer reviews; one approval and green CI are required to merge.
    We squash-merge, so the PR title becomes the commit message.
@@ -45,9 +47,15 @@ have the right to submit it under the project license.
 
 ## Code rules
 
-- TypeScript, `strict` mode. No `any` without a comment explaining why.
-- **Security is not optional.** Web content never gets Node access. Every new IPC channel,
-  preload API or permission is called out in the PR description and needs maintainer review.
+- **Touch Chromium as little as possible.** Prefer, in order: new code in `src/` →
+  a `chromium_src/` override → a small `.patch`. PRs that add patches explain why the
+  other two options don't work.
+- C++ follows the [Chromium style guide](https://chromium.googlesource.com/chromium/src/+/main/styleguide/c++/c++.md)
+  (`clang-format`, `gn format`). TypeScript for WebUI is `strict`.
+- **Security is not optional.** Every new Mojo interface, WebUI binding or permission is
+  called out in the PR description and needs maintainer review.
+- New source files start with the MPL-2.0 header:
+  `This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.`
 - Simple beats clever. Don't add a dependency for what a few lines can do.
 - UI changes include a screenshot or short recording.
 - Logic with branches or parsing comes with a test.
